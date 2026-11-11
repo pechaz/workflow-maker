@@ -1,0 +1,24 @@
+{
+  "name": "workflow-maker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Production workflow editor.",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "shared",
+    "backend",
+    "front"
+  ],
+  "devDependencies": {
+    "typescript": "6.0.3"
+  },
+  "scripts": {
+    "test": "node --test shared/src/*/test/*.test.ts backend/src/modules/*/test/*.test.ts",
+    "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p backend/tsconfig.json && tsc --noEmit -p front/tsconfig.json",
+    "start": "node backend/src/main.ts"
+  }
+}

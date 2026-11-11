@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: workflow
+      POSTGRES_PASSWORD: workflow
+      POSTGRES_DB: workflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - workflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U workflow -d workflow
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: "postgres://workflow:workflow@postgres:5432/workflow"
+      PORT: "3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - 'fetch("http://127.0.0.1:3001/health").then(function (response) { process.exit(Number(!response.ok)) }).catch(function () { process.exit(1) })'
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  front:
+    build:
+      context: .
+      dockerfile: front/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  workflow-postgres:

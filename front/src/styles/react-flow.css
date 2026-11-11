@@ -1,0 +1,48 @@
+.react-flow__handle {
+  width: 0.7rem;
+  height: 0.7rem;
+  background: var(--foreground);
+  border: 2px solid var(--background);
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+
+.react-flow__controls-button {
+  background: var(--card);
+  border-bottom-color: var(--border);
+  fill: var(--foreground);
+}
+
+.react-flow__controls-button:hover {
+  background: var(--muted);
+}
+
+.react-flow__minimap {
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.react-flow__attribution {
+  background: color-mix(in oklch, var(--card) 80%, transparent);
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge.selected-path .react-flow__edge-path {
+  stroke: #1d4ed8 !important;
+  stroke-width: 4.5px !important;
+  filter: drop-shadow(0 0 4px rgb(37 99 235 / 80%));
+}
+
+.react-flow__edgeupdater {
+  r: 7;
+  fill: #1d4ed8;
+  stroke: #ffffff;
+  stroke-width: 2;
+}

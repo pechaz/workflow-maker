@@ -1,0 +1,12 @@
+{
+  "name": "@workflow/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./workflow": "./src/workflow/index.ts",
+    "./schedule": "./src/schedule/index.ts",
+    "./validate": "./src/validate/index.ts"
+  }
+}
