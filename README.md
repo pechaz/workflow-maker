@@ -114,9 +114,92 @@ The editor keeps the invalid draft, highlights the steps and connections named i
 - `GET /api/workflow` → `{ revision, workflow, schedule }`
 - `PUT /api/workflow` with `{ "workflow": { "steps": [], "connections": [] } }` → the same shape, or the error body above
 
-An empty database is seeded with the Cutting / Preparation / Assembly example. There is one workflow. Each successful save replaces that document and increments `revision`. The API does not require a revision token. Overlapping saves are full documents; the later committed update wins. The editor sends the latest valid snapshot again if you edit during a save.
+## How the JSON document is created and kept
 
-Steps store `id`, `name`, `durationMinutes`, and `position`. Connections store `id`, `fromStepId`, and `toStepId`.
+Postgres stores one workflow as one JSON document. The schedule, the selection, and the on-screen size of a step are calculated or kept in the editor. They are left out of the database. The stored value is the workflow object: an array of steps and an array of connections.
+
+```json
+{
+  "steps": [
+    {
+      "id": "cutting",
+      "name": "Cutting",
+      "durationMinutes": 20,
+      "position": { "x": 0, "y": 0 }
+    }
+  ],
+  "connections": [
+    {
+      "id": "cutting-assembly",
+      "fromStepId": "cutting",
+      "toStepId": "assembly"
+    }
+  ]
+}
+```
+
+A step keeps `id`, `name`, `durationMinutes`, and `position` (`x` and `y`). A connection keeps `id`, `fromStepId`, and `toStepId`. Names are stored trimmed. Durations are numbers of minutes. New steps and connections created in the editor get a random UUID. The seeded example uses the stable ids `cutting`, `preparation`, `assembly`, `cutting-assembly`, and `preparation-assembly`.
+
+### The table
+
+`backend/migrations/001_init.sql` defines a single table, `workflow_document`:
+
+| Column | Role |
+| --- | --- |
+| `id` | Always `1`. The primary key, with a check that rejects any other id. |
+| `revision` | A `bigint` counter. The first write is `1`. Each later write adds 1. |
+| `document` | The workflow object, stored as `jsonb`. |
+| `updated_at` | The time of the last write, `timestamptz`, defaulting to `now()`. |
+
+There is one row. The API never inserts a second workflow, and it never keeps older copies of the document. `revision` counts writes. The client does not send it back, and a save is accepted without comparing it to the revision currently stored.
+
+### Creating the table
+
+On startup the API opens a Postgres pool and runs `001_init.sql`. The statement is `CREATE TABLE IF NOT EXISTS`, so a restart leaves an existing table in place. Startup creates the table and does not insert a workflow. The Docker volume `workflow-postgres` holds the Postgres data directory, so the table and its row survive `docker compose down` and the next `docker compose up`. `docker compose down -v` deletes that volume. The next launch creates an empty table again, and the next load seeds it as described below.
+
+### Creating the first document
+
+The row appears on the first `GET /api/workflow` when `id = 1` is missing. The repository inserts the Cutting / Preparation / Assembly example from `shared`, with `revision` 1, and casts the JSON string to `jsonb`. The insert is `ON CONFLICT (id) DO NOTHING`. If two loads arrive together, one insert wins and returns the new row. The other insert changes nothing, then reads the row the first request wrote. Either way the caller receives revision 1 and the example workflow.
+
+A `PUT` can also create the row when the table is still empty. That insert stores the workflow from the request at revision 1. It uses the example only when the row is created by a load.
+
+After either write, the repository reads the `jsonb` back through the same validator the API uses on input. A row that cannot be read as a workflow fails the request with “Stored workflow is invalid.” A normal save cannot produce that row, because the API validates before it writes.
+
+### What a save writes
+
+`PUT /api/workflow` expects `{ "workflow": { "steps": [], "connections": [] } }`. The body must be JSON, at most 1 MB. The API validates `workflow` before it touches the database. A malformed body returns HTTP 400. A readable workflow that breaks a rule returns HTTP 422. In both cases the stored row stays as it was.
+
+A valid workflow is written in one statement:
+
+```sql
+INSERT INTO workflow_document (id, revision, document)
+VALUES (1, 1, $1::jsonb)
+ON CONFLICT (id) DO UPDATE
+SET document = EXCLUDED.document,
+    revision = workflow_document.revision + 1,
+    updated_at = now()
+RETURNING revision, document
+```
+
+The whole `document` value is replaced. Steps and connections that were removed in the editor are absent from the new JSON, and fields that were edited have their new values. Postgres applies that update as one row write, so an interrupted statement or two overlapping saves leave either the previous document or the new one. They do not leave a mix of old and new steps. When two saves overlap, the later committed statement wins, and `revision` still increases by 1 for each committed write. The response returns the stored workflow, the new revision, and a schedule computed from that workflow. The schedule is not written into `document`.
+
+`GET /api/workflow` reads that same row and computes the schedule again. A load of an existing row leaves `revision` and `document` unchanged.
+
+### How the editor maintains the document
+
+The screen loads `GET /api/workflow` once and turns the JSON into editor state: the duration becomes text, and each step and connection gains a selected flag. Node width and height are measured on the canvas. Those three things stay in the browser.
+
+Each edit rebuilds a workflow object from the current editor state and, when the edit should be stored, sends that whole object. The database never receives a patch.
+
+- **Add step** appends a step named “New step”, lasting 10 minutes, placed near the last steps, and saves immediately.
+- **Rename** and **duration** update that step and save about 300ms after the last keystroke. The duration text is parsed to a number in the JSON. Text that is not a positive number fails validation, so the previous document stays stored.
+- **Drag** updates `position` and saves when the step is dropped. Moving the pointer during the drag stays on screen.
+- **Connect** appends one connection from the source step to the target step and saves immediately. A second arrow with the same ends is ignored. A connection from a step to itself is kept on screen, fails the cycle check, and is not written. **Retarget** changes `fromStepId` and `toStepId` on the existing connection id, and ignores a drag that would point the step at itself or repeat an arrow that is already there.
+- **Delete** removes the step or connection from the arrays. Deleting a step also removes every connection that used it. That save is immediate. **Remove** does the same for the selected connections.
+- **Reset** replaces the editor state with empty `steps` and `connections` and saves that empty document. The empty document is valid, so the row becomes `{ "steps": [], "connections": [] }` and `revision` increases. The example is not written again while the row exists.
+- Selecting a step or a connection, and measuring a node, change editor state only. They do not start a save.
+
+Before the request, the editor runs the same validator as the API. An invalid graph is kept on screen and is not sent. A graph that matches the last successful save is not sent again. One save is in flight at a time. Edits made while it is in flight are kept, and when that request finishes the editor sends the latest valid snapshot if it differs from what was just stored. **Retry** sends the current valid snapshot after a network or server failure. A failed save leaves the previous row in place and leaves the draft on screen.
 
 ## Design
 
